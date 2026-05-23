@@ -62,7 +62,7 @@ app.post('/api/download', async (req, res) => {
                         const dataUrl = canvas.toDataURL('image/jpeg', 1.0);
                         dataUrls.push(dataUrl);
                     } catch (e) {
-                        // Bỏ qua lỗi cross-origin nếu có
+                        // Bỏ qua lỗi bảo mật nếu có
                     }
                 });
             }
@@ -89,6 +89,36 @@ app.post('/api/download', async (req, res) => {
             });
         }
 
+        // TIẾN HÀNH ĐÓNG GÓI FILE PDF
+        const pdfDoc = await PDFDocument.create();
+        for (const dataStr of pageImagesBase64) {
+            let imageBuffer;
+            if (dataStr.startsWith('data:image')) {
+                const base64Data = dataStr.split(',')[1];
+                imageBuffer = Buffer.from(base64Data, 'base64');
+            } else {
+                const response = await axios.get(dataStr, { responseType: 'arraybuffer' });
+                imageBuffer = Buffer.from(response.data, 'binary');
+            }
+            
+            const image = await pdfDoc.embedJpg(imageBuffer);
+            const p = pdfDoc.addPage([image.width, image.height]);
+            p.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+        }
+
+        const pdfBytes = await pdfDoc.save();
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename="tailieu_bichan.pdf"');
+        res.send(Buffer.from(pdfBytes));
+
+    } catch (err) {
+        if (browser) await browser.close();
+        res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
+    }
+});
+
+app.listen(PORT, () => console.log(`Server đang chạy tại cổng ${PORT}`));
         // TIẾN HÀNH ĐÓNG GÓI FILE PDF
         const pdfDoc = await PDFDocument.create();
         for (const dataStr of pageImagesBase64) {
