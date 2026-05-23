@@ -28,10 +28,9 @@ app.post('/api/download', async (req, res) => {
         const pageTitle = await page.title();
         console.log("=== THÔNG TIN: Đã vào trang: " + pageTitle + " ===");
 
-        // THUẬT TOÁN CUỘN THÔNG MINH: Tìm đúng hộp cuộn nội bộ của Google Drive để cuộn
+        // THUẬT TOÁN CUỘN THÔNG MINH
         await page.evaluate(async () => {
             await new Promise((resolve) => {
-                // Tìm phần tử có khả năng cuộn chứa tài liệu của Google
                 const scrollableElement = Array.from(document.querySelectorAll('div')).find(el => {
                     const style = window.getComputedStyle(el);
                     return (style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > window.innerHeight;
@@ -49,29 +48,25 @@ app.post('/api/download', async (req, res) => {
                         totalHeight += distance;
                         if (totalHeight >= scrollableElement.scrollHeight) { clearInterval(timer); resolve(); }
                     }
-                }, 400); // Chờ 400ms mỗi lần cuộn để kích hoạt render hình ảnh ổn định
+                }, 400);
             });
         });
 
-        // BỘ TRÍCH XUẤT ĐA NĂNG: Quét cả Ảnh gốc lẫn bóc tách dữ liệu từ Canvas đồ họa
+        // BỘ TRÍCH XUẤT ĐA NĂNG
         const pageImagesBase64 = await page.evaluate(() => {
             let dataUrls = [];
-            
-            // 1. Thử quét tất cả các thẻ Canvas (Chiêu mới của Google)
             const canvases = document.querySelectorAll('canvas');
             if (canvases.length > 0) {
                 canvases.forEach(canvas => {
                     try {
-                        // Ép canvas xuất ra chuỗi dữ liệu ảnh dạng Base64
                         const dataUrl = canvas.toDataURL('image/jpeg', 1.0);
                         dataUrls.push(dataUrl);
                     } catch (e) {
-                        // Bỏ qua nếu dính lỗi bảo mật cross-origin
+                        // Bỏ qua lỗi cross-origin nếu có
                     }
                 });
             }
 
-            // 2. Nếu không có canvas hoặc ít trang, quét tiếp thẻ <img> bổ trợ
             if (dataUrls.length === 0) {
                 const imgs = document.querySelectorAll('img');
                 imgs.forEach(img => {
@@ -86,6 +81,44 @@ app.post('/api/download', async (req, res) => {
         console.log(`=== THÔNG TIN: Bộ quét tìm thấy tổng cộng ${pageImagesBase64.length} trang dữ liệu ===`);
 
         await browser.close();
+        browser = null;
+
+        if (pageImagesBase64.length === 0) {
+            return res.status(400).json({ 
+                error: `Không bóc tách được dữ liệu hiển thị. Cấu trúc trang đã thay đổi.` 
+            });
+        }
+
+        // TIẾN HÀNH ĐÓNG GÓI FILE PDF
+        const pdfDoc = await PDFDocument.create();
+        for (const dataStr of pageImagesBase64) {
+            let imageBuffer;
+            if (dataStr.startsWith('data:image')) {
+                const base64Data = dataStr.split(',')[1];
+                imageBuffer = Buffer.from(base64Data, 'base64');
+            } else {
+                const response = await axios.get(dataStr, { responseType: 'arraybuffer' });
+                imageBuffer = Buffer.from(response.data, 'binary');
+            }
+            
+            const image = await pdfDoc.embedJpg(imageBuffer);
+            const p = pdfDoc.addPage([image.width, image.height]);
+            p.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+        }
+
+        const pdfBytes = await pdfDoc.save();
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename="tailieu_bichan.pdf"');
+        res.send(Buffer.from(pdfBytes));
+
+    } catch (err) {
+        if (browser) await browser.close();
+        res.status(500).json({ error: 'Lỗi hệ thống: ' + err.message });
+    }
+});
+
+app.listen(PORT, () => console.log(`Server đang chạy tại cổng ${PORT}`));        await browser.close();
         browser = null;
 
         if (pageImagesBase64.length === 0) {
